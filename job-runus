@@ -1,0 +1,312 @@
+#!/bin/bash
+# by Robert Socha / 2021
+# version: 0.1 beta
+
+ME="job-runus"
+
+_prefix="$ME"
+
+show_usage() {
+    echo "$0 -n -i -p -d <job name> -q -l -f lock_file -w <wait_lock> -x -t <timeout> <command> <args>"
+    echo -e "\t-n - dry run"
+    echo -e "\t-i - no JOBID prefix in log file"
+    echo -e "\t-p - no error dump"
+    echo -e "\t-d - job name / description"
+    echo -e "\t-q - quiet run when locked"
+    echo -e "\t-b - use only base name for lock_file"
+    echo -e "\t-l - guard execution (only allow one copy)"
+    echo -e "\t-f - guard execution (only allow one copy) with named lock_file"
+    echo -e "\t-w - wait for lock for wait_lock seconds"
+    echo -e "\t-t - terminate command after timeout seconds (kill 5 seconds after timeout)"
+}
+
+# hack
+if [[ "$1" == "-h" ]] || [[ "$1" == "--help" ]]
+then
+    show_usage
+    exit 1
+fi
+
+_jobid=$(date +%s%N)
+
+if [[ -s /etc/job-runus/config ]]
+then
+	source /etc/job-runus/config
+fi
+
+if [[ -s ~/.config/$ME/config ]]
+then
+	source "~/.config/$ME/config"
+fi
+
+__id=$(id -u)
+if [[ -z $JOB_RUNUS_LOG ]]
+then
+	if [[ ${__id} -eq 0 ]]
+	then
+		JOB_RUNUS_LOG="/var/log/$ME.log"
+	else	
+		mkdir -p "$(eval echo ~/.${ME}/)"
+		JOB_RUNUS_LOG=$(eval echo "~/.${ME}/${ME}.log")
+	fi
+fi
+
+if [[ -z $JOB_RUNUS_SPOOL ]]
+then
+	if [[ ${__id} -eq 0 ]]
+	then
+		JOB_RUNUS_SPOOL="/var/spool"
+	else	
+		JOB_RUNUS_SPOOL=$(eval echo "~/.${ME}/spool")
+	fi
+fi
+
+JSPOOL="${JOB_RUNUS_SPOOL}/$ME"
+
+# Detect mode
+
+_mode="run"
+
+# TODO: report mode, run mode
+
+# RUN MODE
+_dry_run=0
+_lock=0
+_lock_wait=0
+_lock_file=""
+_lock_file_base=0
+_timeout=0
+_silent_lock=0
+_nojobidlog=0
+_noerrordump=0
+_jobname=""
+_jobname_opt=""
+
+while getopts ":lf:t:w:hnqbipd:" opt
+do
+    case ${opt} in
+        i)
+            _nojobidlog=1
+            ;;
+        p)
+            _noerrordump=1
+            ;;
+        n)
+            _dry_run=1
+            ;;
+        b)
+            _lock=1
+            _lock_file_base=1
+            ;;
+        q)
+            _silent_lock=1
+            ;;
+        d)
+            _jobname="${OPTARG## }"
+            _jobname="${_jobname%% }"
+            _jobname_opt="${_jobname}"
+            ;;
+        f)
+            _lock=1
+            _lock_file=${OPTARG}
+            ;;
+        l)
+            _lock=1
+            ;;
+        w)
+            if ! [[ ${OPTARG}  =~ ^[0-9]+$ ]]
+            then
+                echo "ERROR: option lock_waith require positive integer" >&2
+                exit 1
+            fi
+            _lock_wait="${OPTARG}"
+            ;;
+        t)
+            if ! [[ ${OPTARG}  =~ ^[0-9]+$ ]]
+            then
+                echo "ERROR: option timeout require positive integer" >&2
+                exit 1
+            fi
+            _timeout="${OPTARG}"
+            ;;
+        h)
+            show_usage
+            exit 1
+            ;;
+        \?)
+            echo "ERROR: invalid option: -$OPTARG" >&2
+            show_usage
+            exit 1
+        ;;
+      : )
+        echo "ERROR: invalid option: -$OPTARG requires an argument" >&2
+        exit 1
+        ;;
+    esac
+  done
+shift $((OPTIND -1))
+
+_timeout_kill=5
+
+if [[ $# -lt 1 ]]
+then
+    echo "ERROR: missing command for execution..." >&2
+    exit 1
+fi
+
+[[ ! -d $(dirname ${JOB_RUNUS_LOG}) ]] && mkdir -p $(dirname "${JOB_RUNUS_LOG}")
+
+exec >>"${JOB_RUNUS_LOG}"
+[[ ${_nojobidlog} -eq 0 ]] && exec 1>  >(sed -u "s/^/${_jobid}: /")
+exec 2>&1
+
+_ocmd="$1"
+# try to locate command in path
+if ! _cmd=$(command -v "$_ocmd" 2>/dev/null)
+then
+    if ! _cmd=$(readlink -e -n "$_ocmd")
+    then
+        echo "ERROR: unable to locate ${_ocmd} command..." >&2
+        exit 1
+    fi
+    echo $_cmd
+fi
+shift
+if [[ $_lock -eq 1 ]]
+then
+    if [[ -z $_lock_file ]]
+    then
+        _base=$(basename $_cmd)
+        if [[ -n $@ ]] && [[ $_lock_file_base -eq 0 ]]
+        then
+            _largs=$(echo "$@" | sed 's/[^a-zA-Z0-9]//g')
+            _lock_file="${_base%%.*}-${_largs}"
+        else
+            _lock_file="${_base%%.*}"
+        fi
+        if [[ -n $_prefix ]]
+        then
+            _lock_file="${_prefix}-${_lock_file}"
+        fi
+    fi
+fi
+exe=""
+if [[ $_timeout -gt 0 ]]
+then
+    exe="timeout -k ${_timeout_kill} ${_timeout}"
+fi
+
+# TODO: cleanup / error catch
+_TMPFILE_ERR=""
+if [[ ${_noerrordump} -eq 0 ]]
+then
+    _TMPFILE_ERR=$(mktemp /tmp/_$ME.stderr.XXXXXXXXXX) || exit 254
+fi
+
+if [[ ! -d $JSPOOL ]]
+then
+    mkdir -p "$JSPOOL"
+fi
+if [[ -n ${_jobname} ]]
+then
+    _jobcmd="$_cmd $@"
+    _jobcmd="${_jobcmd## }"
+    _jobcmd="${_jobcmd%% }"
+    _jobname="${_jobname} as ${_jobcmd}"
+else
+    _jobname="$_cmd $@"
+    _jobname="${_jobname## }"
+    _jobname="${_jobname%% }"
+fi
+_start=$(date +%s%3N)
+if [[ $_dry_run -eq 1 ]]
+then
+    echo "$exe $_cmd $@"
+    _rc=0
+else
+    if [[ $_lock -gt 0 ]]
+    then
+        _flock="flock"
+        if [[ $_lock_wait -gt 0 ]]
+        then
+            _flock="${_flock} -w ${_lock_wait}"
+        fi
+        if [[ "${_lock_file:0:1}" != "/" ]]
+        then
+            _lock_file="/var/lock/${_lock_file}"
+        fi
+        (
+            $_flock -n 9 || exit 255
+            echo "## Start Job ${_jobname} at $(date -R) #########"
+            # Split stderr to separate files	
+            if [[ ${_noerrordump} -eq 0 ]]
+            then
+                $exe $_cmd $@  2> >(tee "${_TMPFILE_ERR}")
+            else
+                $exe $_cmd $@
+            fi
+            _rc=$?
+            [[ -f ${_lock_file} ]] && rm -f "${_lock_file}" &>/dev/null
+            exit $_rc
+        ) 9>"${_lock_file}"
+        _rc=$?
+    else
+        echo "## Start Job ${_jobname} at $(date -R) #########"
+        _silent_lock=0
+        if [[ ${_noerrordump} -eq 0 ]]
+        then
+            $exe $_cmd $@  2> >(tee "${_TMPFILE_ERR}")
+        else
+            $exe $_cmd $@
+        fi
+        _rc=$?
+    fi
+fi
+_end=$(date +%s%3N)
+_tms=$(($_end - $_start))
+_ts=$(($_tms / 1000))
+_tm=$(($_ts / 60))
+if [[ $_rc -eq 255 ]]
+then
+    if [[ $_silent_lock -eq 1 ]]
+    then
+        [[ -n ${_TMPFILE_ERR} ]] && rm -f "${_TMPFILE_ERR}" 2>/dev/null
+        exit 255
+    fi
+    _status="FAIL / LOCKED"
+elif [[ $_rc -eq 124 ]]
+then
+    _status="TIMEOUT / TERMINATED"
+elif [[ $_rc -eq 137 ]]
+then
+    _status="TIMEOUT / KILLED"
+elif [[ $_rc -ne 0 ]]
+then
+    _status="FAILED / $_rc"
+else
+    _status="OK"
+fi
+echo "## Stop Job ${_jobname} at $(date -R) $_tm m / $_ts s / $_tms ms RC: $_status #########"
+if [[ ${_rc} -ne 0 ]] && [[ ${_noerrordump} -eq 0 ]]
+then
+    # Create error dump in spool
+    _dump="$JSPOOL/$_jobid"
+    {
+        echo "JR_JOBID=$_jobid"
+        [[ -n ${_jobname_opt} ]] && echo "JR_NAME=\"${_jobname_opt}\""
+        echo "JR_RC=${_rc}"
+        echo "JR_TIME=${_tms}"
+        _jr_exec="${exe} ${_cmd} $@"
+        _jr_exec="${_jr_exec## }"
+        _jr_exec="${_jr_exec%% }"
+        echo "JR_EXEC=\"${_jr_exec## }\""
+        echo "JR_CMD=\"${_cmd}\""
+        echo "JR_ARGS=\"$@\""
+        echo "JR_STATUS=\"${_status}\""
+    } >"${_dump}.create"
+    [[ -s ${_TMPFILE_ERR} ]] && cp "${_TMPFILE_ERR}" "${_dump}"
+    mv -f "${_dump}.create" "${_dump}.id"
+fi
+[[ -n ${_TMPFILE_ERR} ]] && rm -f "${_TMPFILE_ERR}" 2>/dev/null
+exit $_rc
+# vim: set tabstop=4 shiftwidth=4 expandtab autoindent indentexpr= nosmartindent :
