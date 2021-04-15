@@ -28,7 +28,7 @@ then
     exit 1
 fi
 
-_jobid=$(date +%s%N)
+_jobid=$(date +%s@%N)
 
 if [[ -s /etc/job-runus/config ]]
 then
