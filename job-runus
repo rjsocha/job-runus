@@ -158,7 +158,7 @@ fi
 [[ ! -d $(dirname ${JOB_RUNUS_LOG}) ]] && mkdir -p $(dirname "${JOB_RUNUS_LOG}")
 
 exec >>"${JOB_RUNUS_LOG}"
-[[ ${_nojobidlog} -eq 0 ]] && exec 1>  >(sed -u "s/^/${_jobid}: /")
+[[ ${_nojobidlog} -eq 0 ]] && exec 1>  >(sed -u "s/^/${_jobid} /")
 exec 2>&1
 
 _ocmd="$1"
