@@ -1,0 +1,8 @@
+Package: job-runus
+Version: 0.2-1
+Section: base
+Priority: optional
+Architecture: all
+Depends: bash
+Maintainer: Robert Socha <socha@socha.it
+Description: job-runus
