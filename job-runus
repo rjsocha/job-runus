@@ -1,11 +1,17 @@
 #!/bin/bash
 # by Robert Socha / 2021
-# version: 0.1 beta
+# version: 0.2 beta
 # URL: https://github.com/rjsocha/job-runus
 
 ME="job-runus"
+JOB_RUNUS_SPOOL_GLOBAL="/var/spool"
 
 _prefix="$ME"
+
+# Some globals
+_KEEP=0
+
+set -o pipefail
 
 show_usage() {
     echo "$0 -n -i -p -d <job name> -q -l -f lock_file -w <wait_lock> -x -t <timeout> <command> <args>"
@@ -19,6 +25,15 @@ show_usage() {
     echo -e "\t-f - guard execution (only allow one copy) with named lock_file"
     echo -e "\t-w - wait for lock for wait_lock seconds"
     echo -e "\t-t - terminate command after timeout seconds (kill 5 seconds after timeout)"
+}
+
+show_report_usage() {
+    echo "$0 -r -l -1 -k -a -g -x <filter> -s <entry>"
+    echo -e "\t-l - list errors"
+    echo -e "\t-x - execute filter for each entry (not implemented at the moment)"
+    echo -e "\t-1 - dump one entry and exit"
+    echo -e "\t-k - keep dumped entry"
+    echo -e "\t-s - show entry"
 }
 
 # hack
@@ -56,19 +71,219 @@ if [[ -z $JOB_RUNUS_SPOOL ]]
 then
     if [[ ${__id} -eq 0 ]]
     then
-        JOB_RUNUS_SPOOL="/var/spool"
+        JOB_RUNUS_SPOOL="${JOB_RUNUS_SPOOL_GLOBAL}/$ME"
     else
         JOB_RUNUS_SPOOL=$(eval echo "~/.${ME}/spool")
     fi
 fi
 
-JSPOOL="${JOB_RUNUS_SPOOL}/$ME"
+#nie jest chyba potrzebna ta zmienna
+JSPOOL="${JOB_RUNUS_SPOOL}"
+
+_report_list_global() {
+local _id
+    for _id in $(find "${JOB_RUNUS_SPOOL_GLOBAL}/${ME}" -maxdepth 1 -mindepth 1 -type f  -name "*.id")
+    do
+        echo ${_id%.id}
+    done
+}
+
+_report_list_current() {
+local _id
+    for _id in $(find "${JSPOOL}" -maxdepth 1 -mindepth 1 -type f  -name "*.id")
+    do
+        echo ${_id%.id}
+    done
+}
+
+_report_list_user() {
+local _id
+    [[ $(id -u) == 0 ]] || return
+    # Iterate over all users / hackish... :/
+    getent passwd  | while IFS=: read _user _password _uid _gid _gecos _home _shell
+    do
+        [[ $_uid -lt 100 ]] && continue
+        [[ -d ${_home}/.${ME}/spool ]] || continue
+        for _id in $(find "${_home}/.${ME}/spool" -maxdepth 1 -mindepth 1 -type f  -name "*.id")
+        do
+            echo ${_id%.id}
+        done
+    done
+}
+
+_report_dump_entry() {
+local _entry=$1 _out
+    if [[ -f ${_entry}.id ]]
+    then
+        JR_JOBID=""
+        JR_NAME=""
+        JR_RC=""
+        JR_TIME=""
+        JR_EXEC=""
+        JR_CMD=""
+        JR_ARGS=""
+        JR_STATUS=""
+        JR_USER=""
+        JR_UID=""
+        JR_GID=""
+        # some sanity checks
+        source <(egrep '^JR_[a-zA-Z][a-zA-Z0-9]+="[^"]+"$' "${_entry}.id")
+        [[ -z ${JR_JOBID} ]] && return 1
+        _out="${JR_JOBID}"
+        if [[ -n ${JR_NAME} ]]
+        then
+            _out="${_out} ${JR_NAME}"
+        else
+            _out="${_out} ${JR_CMD}"
+        fi
+        _out="${_out} ${JR_STATUS}"
+        echo "${_out}"
+        echo "TIMESTAMP: $(TZ="Europe/Warsaw" stat -c "%y" "${_entry}.id")"
+        echo "CMD: ${JR_CMD}${JR_ARGS:-} RC: ${JR_RC} RUNTIME: ${JR_TIME} ms USER: ${JR_USER} (${JR_UID}/${JR_GID})"
+        echo "LOG:"
+        [[ -s ${_entry} ]] && sed "s/^/    /" "${_entry}" 
+        return $?
+     fi
+}
+
+_report_show_entries() {
+local _search=$1 _entry _name
+    shift
+    for _entry in $@
+    do
+        _name=$(basename "${_entry}")
+        if [[ ${_name} =~ ${_search} ]]
+        then
+            _report_dump_entry "${_entry}"
+        fi
+    done
+}
+
+_report_dump_one() {
+local _search=$1 _entry _name
+    for _entry in $@
+    do
+        _report_dump_entry "${_entry}" || continue
+        if [[ ${_KEEP} -eq 0 ]]
+        then
+            [[ -f ${_entry}.id ]] && rm -f "${_entry}.id"
+            [[ -f ${_entry} ]] && rm -f "${_entry}"
+        fi
+        break
+    done
+}
+    
+_report() {
+local _list _files _file
+    _list=0
+    _select_all=0
+    _select_user=0
+    _select_global=0
+    _show=0
+    _show_entry=""
+    _dump_one=0
+    while getopts ":lguax:s:k1c" opt
+    do
+        case ${opt} in
+            l)
+                _list=1
+                ;;
+            g)
+                _select_all=0
+                _select_user=0
+                _select_global=1
+                ;;
+            u)
+                _select_all=0
+                _select_user=1
+                _select_global=0
+                ;;
+            a)
+                _select_all=1
+                _select_user=0
+                _select_global=0
+                ;;
+            s)
+                _show=1
+                _show_entry="${OPTARG}"
+                ;;
+            k)
+                _KEEP=1
+                ;;
+            1)
+                _dump_one=1
+                ;;
+            h)
+                show_report_usage
+                return 1
+                ;;
+            \?)
+                echo "ERROR: invalid option: -$OPTARG" >&2
+                show_report_usage
+                return 1
+            ;;
+            :)
+                echo "ERROR: invalid option: -$OPTARG requires an argument" >&2
+                return 1
+            ;;
+        esac
+      done
+    shift $((OPTIND -1))
+    _files=""
+    if [[ ${_select_global} -eq 1 ]]
+    then
+        _files="$(_report_list_global)"
+    elif [[ ${_select_user} -eq 1 ]]
+    then
+        _files="$(report_list_user)"
+    elif [[ ${_select_all} -eq 1 ]]
+    then
+        _files="$(_report_list_global)"
+        _files="${_files} $(_report_list_user)"
+        else
+            _files="$(_report_list_current)"
+        fi
+
+    # sort files
+    _files=$(for _file in $_files
+    do
+        find $_file -printf "%T@\t%p\n"
+    done | sort -n | cut -f 2-)
+    if [[ ${_list} -eq 1 ]]
+    then
+        for _entry in $_files
+        do
+            echo $(basename "${_entry}")
+        done
+        return 0
+    fi
+    if [[ ${_show} -eq 1 ]]
+    then
+        _report_show_entries "${_show_entry}" ${_files}
+        return $?
+    fi
+    if [[ ${_dump_one} -eq 1 ]]
+    then
+        _report_dump_one ${_files}
+        return $?
+    fi
+}
+
 
 # Detect mode
 
 _mode="run"
 
 # TODO: report mode, run mode
+
+# Hack
+if [[ "$1" == "-r" ]]
+then
+    # report mode
+    shift
+    _report "$@"
+    exit $?
+fi
 
 # RUN MODE
 _dry_run=0
@@ -244,7 +459,8 @@ else
             # Split stderr to separate file
             if [[ ${_noerrordump} -eq 0 ]]
             then
-                $exe $_cmd $@  2> >(tee "${_TMPFILE_ERR}")
+                #$exe $_cmd $@  2> >(tee "${_TMPFILE_ERR}")
+                $exe $_cmd $@ 2>&1 | tee "${_TMPFILE_ERR}"
             else
                 $exe $_cmd $@
             fi
@@ -258,7 +474,8 @@ else
         _silent_lock=0
         if [[ ${_noerrordump} -eq 0 ]]
         then
-            $exe $_cmd $@  2> >(tee "${_TMPFILE_ERR}")
+            #$exe $_cmd $@  2> >(tee "${_TMPFILE_ERR}")
+            $exe $_cmd $@ 2>&1 | tee "${_TMPFILE_ERR}"
         else
             $exe $_cmd $@
         fi
@@ -285,7 +502,7 @@ then
     _status="TIMEOUT / KILLED"
 elif [[ $_rc -ne 0 ]]
 then
-    _status="FAILED / $_rc"
+    _status="FAILED"
 else
     _status="OK"
 fi
@@ -295,10 +512,10 @@ then
     # Create error dump in spool
     _dump="$JSPOOL/$_jobid"
     {
-        echo "JR_JOBID=$_jobid"
+        echo "JR_JOBID=\"$_jobid\""
         [[ -n ${_jobname_opt} ]] && echo "JR_NAME=\"${_jobname_opt}\""
-        echo "JR_RC=${_rc}"
-        echo "JR_TIME=${_tms}"
+        echo "JR_RC=\"${_rc}\""
+        echo "JR_TIME=\"${_tms}\""
         _jr_exec="${exe} ${_cmd} $@"
         _jr_exec="${_jr_exec## }"
         _jr_exec="${_jr_exec%% }"
@@ -306,10 +523,13 @@ then
         echo "JR_CMD=\"${_cmd}\""
         echo "JR_ARGS=\"$@\""
         echo "JR_STATUS=\"${_status}\""
+        echo "JR_USER=\"$(id -un)\""
+        echo "JR_UID=\"$(id -u)\""
+        echo "JR_GID=\"$(id -g)\""
     } >"${_dump}.create"
     [[ -s ${_TMPFILE_ERR} ]] && cp "${_TMPFILE_ERR}" "${_dump}"
     mv -f "${_dump}.create" "${_dump}.id"
 fi
 [[ -n ${_TMPFILE_ERR} ]] && rm -f "${_TMPFILE_ERR}" 2>/dev/null
 exit $_rc
-# vim: set tabstop=4 shiftwidth=4 expandtab autoindent indentexpr= nosmartindent :
+# vim: set tabstop=4 shiftwidth=4 expandtab autoindent nosmartindent :
