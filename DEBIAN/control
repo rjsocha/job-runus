@@ -1,8 +1,8 @@
 Package: job-runus
-Version: 0.2-1
-Section: base
+Version: 0.2-2
+Section: admin
 Priority: optional
 Architecture: all
-Depends: bash
 Maintainer: Robert Socha <socha@socha.it
+Homepage: https://github.com/rjsocha/job-runus
 Description: job-runus
