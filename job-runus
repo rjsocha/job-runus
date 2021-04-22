@@ -1,6 +1,6 @@
 #!/bin/bash
 # by Robert Socha / 2021
-# version: 0.2.7 beta
+# version: 0.2.8 beta
 # URL: https://github.com/rjsocha/job-runus
 
 ME="job-runus"
@@ -80,12 +80,20 @@ fi
 #nie jest chyba potrzebna ta zmienna
 JSPOOL="${JOB_RUNUS_SPOOL}"
 
+_report_check_id() {
+local _entry="$1" _name
+    _name=$(basename "${_entry}")
+    # check if this is regular file and validate name
+    [[ -f ${_entry} ]] && [[ ${_name} =~ ^[0-9]+@[0-9]+\.id$ ]] && return 0
+    return 1
+}
+
 _report_list_global() {
 local _id
     [[ -d ${JOB_RUNUS_SPOOL_GLOBAL}/${ME} ]] || return 0
     for _id in $(find "${JOB_RUNUS_SPOOL_GLOBAL}/${ME}" -maxdepth 1 -mindepth 1 -type f  -name "*.id")
     do
-        echo ${_id}
+        _report_check_id "${_id}" && echo "${_id}"
     done
 }
 
@@ -94,7 +102,7 @@ local _id
     [[ -d ${JSPOOL} ]] || return 0
     for _id in $(find "${JSPOOL}" -maxdepth 1 -mindepth 1 -type f  -name "*.id")
     do
-        echo ${_id}
+        _report_check_id "${_id}" && echo "${_id}"
     done
 }
 
@@ -108,7 +116,7 @@ local _id
         [[ -d ${_home}/.${ME}/spool ]] || continue
         for _id in $(find "${_home}/.${ME}/spool" -maxdepth 1 -mindepth 1 -type f  -name "*.id")
         do
-            echo ${_id}
+            _report_check_id "${_id}" && echo "${_id}"
         done
     done | sort | uniq
 }
