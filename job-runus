@@ -82,6 +82,7 @@ JSPOOL="${JOB_RUNUS_SPOOL}"
 
 _report_list_global() {
 local _id
+    [[ -d ${JOB_RUNUS_SPOOL_GLOBAL}/${ME} ]] || return 0
     for _id in $(find "${JOB_RUNUS_SPOOL_GLOBAL}/${ME}" -maxdepth 1 -mindepth 1 -type f  -name "*.id")
     do
         echo ${_id%.id}
@@ -90,6 +91,7 @@ local _id
 
 _report_list_current() {
 local _id
+    [[ -d ${JSPOOL} ]] || return 0
     for _id in $(find "${JSPOOL}" -maxdepth 1 -mindepth 1 -type f  -name "*.id")
     do
         echo ${_id%.id}
