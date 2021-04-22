@@ -110,7 +110,7 @@ local _id
         do
             echo ${_id%.id}
         done
-    done
+    done | sort | uniq
 }
 
 _report_dump_entry() {
