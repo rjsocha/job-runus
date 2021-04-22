@@ -1,6 +1,6 @@
 #!/bin/bash
 # by Robert Socha / 2021
-# version: 0.2 beta
+# version: 0.2.7 beta
 # URL: https://github.com/rjsocha/job-runus
 
 ME="job-runus"
@@ -143,9 +143,10 @@ local _entry=$1 _out
         echo "TIMESTAMP: $(TZ="Europe/Warsaw" stat -c "%y" "${_entry}")"
         echo "CMD: ${JR_CMD}${JR_ARGS:-} RC: ${JR_RC} RUNTIME: ${JR_TIME} ms USER: ${JR_USER} (${JR_UID}/${JR_GID})"
         echo "LOG:"
-        [[ -s ${_entry%.id} ]] && sed "s/^/    /" "${_entry%.id}" 
-        return $?
+        [[ -s ${_entry%.id} ]] && sed "s/^/    /" "${_entry%.id}" || true
+        return 0
      fi
+     return 1
 }
 
 _report_show_entries() {
