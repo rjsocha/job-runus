@@ -1,6 +1,6 @@
-#!/bin/bash
+{__home}in/bash
 # by Robert Socha / 2021
-# version: 0.2.8 beta
+# version: 0.2.9 beta
 # URL: https://github.com/rjsocha/job-runus
 
 ME="job-runus"
@@ -50,20 +50,24 @@ then
     source /etc/job-runus/config
 fi
 
-if [[ -s ~/.config/$ME/config ]]
+if [[ -s ${__home}/.config/$ME/config ]]
 then
-    source "$HOME/.config/$ME/config"
+    source "${__home}/.config/$ME/config"
 fi
 
 __id=$(id -u)
+__user=$(id -un)
+__home=$(eval echo "~${__user}")
+
 if [[ -z $JOB_RUNUS_LOG ]]
 then
     if [[ ${__id} -eq 0 ]]
     then
         JOB_RUNUS_LOG="/var/log/$ME.log"
     else
-        mkdir -p "$(eval echo ~/.${ME}/)"
-        JOB_RUNUS_LOG=$(eval echo "~/.${ME}/${ME}.log")
+        # TODO: err checking
+        mkdir -p "${__home}/.${ME}"
+        JOB_RUNUS_LOG="${__home}/.${ME}/${ME}.log"
     fi
 fi
 
@@ -73,7 +77,7 @@ then
     then
         JOB_RUNUS_SPOOL="${JOB_RUNUS_SPOOL_GLOBAL}/$ME"
     else
-        JOB_RUNUS_SPOOL=$(eval echo "~/.${ME}/spool")
+        JOB_RUNUS_SPOOL="${__home}/.${ME}/spool")
     fi
 fi
 
@@ -340,7 +344,7 @@ do
             _lock=1
             ;;
         w)
-            if ! [[ ${OPTARG}  =~ ^[0-9]+$ ]]
+            if ! [[ ${OPTARG} =~ ^[0-9]+$ ]]
             then
                 echo "ERROR: option lock_waith require positive integer" >&2
                 exit 1
@@ -348,7 +352,7 @@ do
             _lock_wait="${OPTARG}"
             ;;
         t)
-            if ! [[ ${OPTARG}  =~ ^[0-9]+$ ]]
+            if ! [[ ${OPTARG} =~ ^[0-9]+$ ]]
             then
                 echo "ERROR: option timeout require positive integer" >&2
                 exit 1
