@@ -250,7 +250,7 @@ local _list _files _file
         _files="$(_report_list_global)"
     elif [[ ${_select_user} -eq 1 ]]
     then
-        _files="$(report_list_user)"
+        _files="$(_report_list_user)"
     elif [[ ${_select_all} -eq 1 ]]
     then
         _files="$(_report_list_global)"
