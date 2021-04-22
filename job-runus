@@ -85,7 +85,7 @@ local _id
     [[ -d ${JOB_RUNUS_SPOOL_GLOBAL}/${ME} ]] || return 0
     for _id in $(find "${JOB_RUNUS_SPOOL_GLOBAL}/${ME}" -maxdepth 1 -mindepth 1 -type f  -name "*.id")
     do
-        echo ${_id%.id}
+        echo ${_id}
     done
 }
 
@@ -94,7 +94,7 @@ local _id
     [[ -d ${JSPOOL} ]] || return 0
     for _id in $(find "${JSPOOL}" -maxdepth 1 -mindepth 1 -type f  -name "*.id")
     do
-        echo ${_id%.id}
+        echo ${_id}
     done
 }
 
@@ -108,14 +108,14 @@ local _id
         [[ -d ${_home}/.${ME}/spool ]] || continue
         for _id in $(find "${_home}/.${ME}/spool" -maxdepth 1 -mindepth 1 -type f  -name "*.id")
         do
-            echo ${_id%.id}
+            echo ${_id}
         done
     done | sort | uniq
 }
 
 _report_dump_entry() {
 local _entry=$1 _out
-    if [[ -f ${_entry}.id ]]
+    if [[ -f ${_entry} ]]
     then
         JR_JOBID=""
         JR_NAME=""
@@ -129,7 +129,7 @@ local _entry=$1 _out
         JR_UID=""
         JR_GID=""
         # some sanity checks
-        source <(egrep '^JR_[a-zA-Z][a-zA-Z0-9]+="[^"]+"$' "${_entry}.id")
+        source <(egrep '^JR_[a-zA-Z][a-zA-Z0-9]+="[^"]+"$' "${_entry}")
         [[ -z ${JR_JOBID} ]] && return 1
         _out="${JR_JOBID}"
         if [[ -n ${JR_NAME} ]]
@@ -140,10 +140,10 @@ local _entry=$1 _out
         fi
         _out="${_out} ${JR_STATUS}"
         echo "${_out}"
-        echo "TIMESTAMP: $(TZ="Europe/Warsaw" stat -c "%y" "${_entry}.id")"
+        echo "TIMESTAMP: $(TZ="Europe/Warsaw" stat -c "%y" "${_entry}")"
         echo "CMD: ${JR_CMD}${JR_ARGS:-} RC: ${JR_RC} RUNTIME: ${JR_TIME} ms USER: ${JR_USER} (${JR_UID}/${JR_GID})"
         echo "LOG:"
-        [[ -s ${_entry} ]] && sed "s/^/    /" "${_entry}" 
+        [[ -s ${_entry%.id} ]] && sed "s/^/    /" "${_entry%.id}" 
         return $?
      fi
 }
@@ -153,7 +153,7 @@ local _search=$1 _entry _name
     shift
     for _entry in $@
     do
-        _name=$(basename "${_entry}")
+        _name=$(basename "${_entry%.id}")
         if [[ ${_name} =~ ${_search} ]]
         then
             _report_dump_entry "${_entry}"
@@ -168,8 +168,8 @@ local _search=$1 _entry _name
         _report_dump_entry "${_entry}" || continue
         if [[ ${_KEEP} -eq 0 ]]
         then
-            [[ -f ${_entry}.id ]] && rm -f "${_entry}.id"
             [[ -f ${_entry} ]] && rm -f "${_entry}"
+            [[ -f ${_entry%.id} ]] && rm -f "${_entry%.id}"
         fi
         break
     done
@@ -242,10 +242,9 @@ local _list _files _file
     then
         _files="$(_report_list_global)"
         _files="${_files} $(_report_list_user)"
-        else
-            _files="$(_report_list_current)"
-        fi
-
+    else
+        _files="$(_report_list_current)"
+    fi
     # sort files
     _files=$(for _file in $_files
     do
@@ -255,7 +254,7 @@ local _list _files _file
     then
         for _entry in $_files
         do
-            echo $(basename "${_entry}")
+            echo $(basename "${_entry%.id}")
         done
         return 0
     fi
