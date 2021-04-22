@@ -6,4 +6,4 @@ rsync -aq DEBIAN build/
 rsync -aR -f"+ */" -f"- *" /usr/bin build/
 cp job-runus build/usr/bin/job-runus
 chmod +x build/usr/bin/job-runus
-dpkg-deb --root-owner-group -b build .
+dpkg-deb -Zgzip -b build deb

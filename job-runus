@@ -470,7 +470,7 @@ else
         ) 9>"${_lock_file}"
         _rc=$?
     else
-        echo "## Start Job ${_jobname} at $(date -R) #########"
+        echo "## Begin ${_jobname} at $(date -R) #########"
         _silent_lock=0
         if [[ ${_noerrordump} -eq 0 ]]
         then
@@ -506,7 +506,7 @@ then
 else
     _status="OK"
 fi
-echo "## Stop Job ${_jobname} at $(date -R) $_tm m / $_ts s / $_tms ms RC: $_status #########"
+echo "## Finish ${_jobname} at $(date -R) $_tm m / $_ts s / $_tms ms RC: $_rc STATUS: $_status #########"
 if [[ ${_rc} -ne 0 ]] && [[ ${_noerrordump} -eq 0 ]]
 then
     # Create error dump in spool
