@@ -1,6 +1,6 @@
 #!/bin/bash
 # by Robert Socha / 2021
-# version: 0.2.10 beta
+# version: 0.3.1 beta
 # URL: https://github.com/rjsocha/job-runus
 
 ME="job-runus"
@@ -13,7 +13,16 @@ _KEEP=0
 
 set -o pipefail
 
-show_usage() {
+show_mode_usage() {
+    echo "$0 <-r|-s|-h> <other options>"
+    echo -e "\tSelect run mode of the command"
+    echo -e "\t-r - select report mode"
+    echo -e "\t-s - select solve mode"
+    echo -e "\t-h - this info or usage for mode: run, report, solve"
+    echo -e "\t   - if none of the above run mode is selected"
+}
+
+show_run_usage() {
     echo "$0 -n -i -p -d <job name> -q -l -f lock_file -w <wait_lock> -x -t <timeout> <command> <args>"
     echo -e "\t-n - dry run"
     echo -e "\t-i - no JOBID prefix in log file"
@@ -28,20 +37,19 @@ show_usage() {
 }
 
 show_report_usage() {
-    echo "$0 -r -l -1 -k -a -g -x <filter> -s <entry>"
+    echo "$0 -r -l -1 -k -a -g -x <filter> -p <entry> -s <entry>"
     echo -e "\t-l - list errors"
     echo -e "\t-x - execute filter for each entry (not implemented at the moment)"
     echo -e "\t-1 - dump one entry and exit"
     echo -e "\t-k - keep dumped entry"
-    echo -e "\t-s - show entry"
+    echo -e "\t-p - show/search entry/ies"
+    echo -e "\t-s - solve entry"
 }
 
-# hack
-if [[ "$1" == "-h" ]] || [[ "$1" == "--help" ]]
-then
-    show_usage
-    exit 1
-fi
+show_solve_usage() {
+    echo "$0 -s <jobid>"
+}
+
 
 _jobid=$(date +%s@%N)
 
@@ -141,7 +149,7 @@ local _entry=$1 _out
         JR_UID=""
         JR_GID=""
         # some sanity checks
-        source <(egrep '^JR_[a-zA-Z][a-zA-Z0-9]+="[^"]+"$' "${_entry}")
+        source <(egrep "^JR_[a-zA-Z][a-zA-Z0-9]+='[^']+'$" "${_entry}")
         [[ -z ${JR_JOBID} ]] && return 1
         _out="${JR_JOBID}"
         if [[ -n ${JR_NAME} ]]
@@ -174,32 +182,73 @@ local _search=$1 _entry _name
     done
 }
 
-_report_dump_one() {
+_report_solve_entries() {
 local _search=$1 _entry _name
+    shift
     for _entry in $@
     do
+        _name=$(basename "${_entry%.id}")
+        if [[ ${_name} =~ ${_search} ]]
+        then
+            touch "${_entry%.id}.solved"
+        fi
+    done
+}
+
+_report_dump_one() {
+local _search=$1 _entry _name _base
+    for _entry in $@
+    do
+        [[ -f ${_entry%.id}.keep ]] && continue
+        [[ -f ${_entry%.id}.solved ]] && continue
         _report_dump_entry "${_entry}" || continue
         if [[ ${_KEEP} -eq 0 ]]
         then
             [[ -f ${_entry} ]] && rm -f "${_entry}"
             [[ -f ${_entry%.id} ]] && rm -f "${_entry%.id}"
+        else
+            _base=$(dirname "${_entry}")
+            touch "${_entry%.id}.keep"
         fi
+        break
+    done
+}
+
+_report_solved_one() {
+local _entry _name _base
+    for _entry in $@
+    do
+        [[ -f ${_entry%.id}.solved ]] || continue
+        _name=$(basename ${_entry})
+        _name="${_name%.id}"
+        if [[ ${_KEEP} -eq 0 ]]
+        then
+            rm -f "${_entry}" 2>/dev/null
+            rm -f "${_entry%.id}" 2>/dev/null
+            rm -f "${_entry%.id}.keep" 2>/dev/null
+            rm -f "${_entry%.id}.solved" 2>/dev/null
+        fi
+        echo ${_name}
         break
     done
 }
     
 _report() {
-local _list _files _file
+local _list _files _file _name _flags
+local _opt OPTIND OPTARG
     _list=0
     _select_all=0
     _select_user=0
     _select_global=0
     _show=0
     _show_entry=""
+    _resolve=0
+    _resolve_entry=""
     _dump_one=0
-    while getopts ":lguax:s:k1c" opt
+    _report_solved=0
+    while getopts ":lguax:s:k1o:m" _opt
     do
-        case ${opt} in
+        case ${_opt} in
             l)
                 _list=1
                 ;;
@@ -218,15 +267,22 @@ local _list _files _file
                 _select_user=0
                 _select_global=0
                 ;;
-            s)
+            p)
                 _show=1
                 _show_entry="${OPTARG}"
+                ;;
+            s)
+                _solve=1
+                _solve_entry="${OPTARG}"
                 ;;
             k)
                 _KEEP=1
                 ;;
             1)
                 _dump_one=1
+                ;;
+            m)
+                _report_solved=1
                 ;;
             h)
                 show_report_usage
@@ -242,7 +298,7 @@ local _list _files _file
                 return 1
             ;;
         esac
-      done
+    done
     shift $((OPTIND -1))
     _files=""
     if [[ ${_select_global} -eq 1 ]]
@@ -267,7 +323,16 @@ local _list _files _file
     then
         for _entry in $_files
         do
-            echo $(basename "${_entry%.id}")
+            _name=$(basename "${_entry%.id}")
+            _flags=""
+            [[ -f ${_entry%.id}.keep ]] && _flags="keep"
+            [[ -f ${_entry%.id}.solved ]] && _flags="solved"
+            if [[ -z ${_flags} ]]
+            then
+                echo "${_name}"
+            else 
+                echo "${_name} (${_flags})"
+            fi
         done
         return 0
     fi
@@ -276,9 +341,19 @@ local _list _files _file
         _report_show_entries "${_show_entry}" ${_files}
         return $?
     fi
+    if [[ ${_solve} -eq 1 ]]
+    then
+        _report_solve_entries "${_solve_entry}" ${_files}
+        return $?
+    fi
     if [[ ${_dump_one} -eq 1 ]]
     then
         _report_dump_one ${_files}
+        return $?
+    fi
+    if [[ ${_report_solved} -eq 1 ]]
+    then
+        _report_solved_one ${_files}
         return $?
     fi
 }
@@ -288,13 +363,42 @@ local _list _files _file
 
 _mode="run"
 
-# TODO: report mode, run mode
-
-# Hack
-if [[ "$1" == "-r" ]]
+if getopts ":rsh" opt
 then
-    # report mode
-    shift
+    case ${opt} in
+        r)
+            _mode="report"
+            shift $((OPTIND -1))
+            ;;
+        s)
+            _mode="solve"
+            shift $((OPTIND -1))
+            ;;
+        h)
+            _mode="help"
+            shift $((OPTIND -1))
+            ;;
+    esac
+fi
+
+if [[ ${_mode} == "help" ]]
+then
+    if [[ $1 == "run" ]]
+    then
+        show_run_usage
+    elif [[ $1 == "report" ]]
+    then
+        show_report_usage
+    elif [[ $1 == "solve" ]]
+    then
+        show_solve_usage
+    else
+        show_mode_usage
+    fi
+    exit 1
+fi
+if [[ "${_mode}" == "report" ]]
+then
     _report "$@"
     exit $?
 fi
@@ -360,12 +464,12 @@ do
             _timeout="${OPTARG}"
             ;;
         h)
-            show_usage
+            show_run_usage
             exit 1
             ;;
         \?)
             echo "ERROR: invalid option: -$OPTARG" >&2
-            show_usage
+            show_run_usage
             exit 1
         ;;
       : )
@@ -526,20 +630,20 @@ then
     # Create error dump in spool
     _dump="$JSPOOL/$_jobid"
     {
-        echo "JR_JOBID=\"$_jobid\""
-        [[ -n ${_jobname_opt} ]] && echo "JR_NAME=\"${_jobname_opt}\""
-        echo "JR_RC=\"${_rc}\""
-        echo "JR_TIME=\"${_tms}\""
+        echo "JR_JOBID='$_jobid'"
+        [[ -n ${_jobname_opt} ]] && echo "JR_NAME='${_jobname_opt}'"
+        echo "JR_RC='${_rc}'"
+        echo "JR_TIME='${_tms}'"
         _jr_exec="${exe} ${_cmd} $@"
         _jr_exec="${_jr_exec## }"
         _jr_exec="${_jr_exec%% }"
-        echo "JR_EXEC=\"${_jr_exec## }\""
-        echo "JR_CMD=\"${_cmd}\""
-        echo "JR_ARGS=\"$@\""
-        echo "JR_STATUS=\"${_status}\""
-        echo "JR_USER=\"$(id -un)\""
-        echo "JR_UID=\"$(id -u)\""
-        echo "JR_GID=\"$(id -g)\""
+        echo "JR_EXEC='${_jr_exec## }'"
+        echo "JR_CMD='${_cmd}'"
+        echo "JR_ARGS='$@'"
+        echo "JR_STATUS='${_status}'"
+        echo "JR_USER='$(id -un)'"
+        echo "JR_UID='$(id -u)'"
+        echo "JR_GID='$(id -g)'"
     } >"${_dump}.create"
     [[ -s ${_TMPFILE_ERR} ]] && cp "${_TMPFILE_ERR}" "${_dump}"
     mv -f "${_dump}.create" "${_dump}.id"
